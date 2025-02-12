@@ -14,38 +14,49 @@ import (
 func ShortenURL(c *gin.Context) {
 	var request struct {
 		OriginalURL string `json:"original_url"`
+		Alias       string `json:"alias"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
-		log.Println("Invalid request body:", err)
+		log.Println("Error binding JSON:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 		return
 	}
 
-	// Cek apakah OriginalURL kosong
 	if request.OriginalURL == "" {
-		log.Println("Received empty URL!")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "URL tidak boleh kosong"})
 		return
 	}
 
-	// Generate short code
-	shortCode := uuid.New().String()[:6]
-	log.Println("Generated short code:", shortCode)
+	shortCode := request.Alias
+	if shortCode == "" {
+		for {
+			shortCode = uuid.New().String()[:6]
 
-	// Insert ke DB
-	_, err := config.DB.Exec(context.Background(), "INSERT INTO urls (short_code, original_url) VALUES ($1, $2)", shortCode, request.OriginalURL)
+			// Cek apakah shortCode sudah ada di database
+			var exists bool
+			err := config.DB.QueryRow(c, "SELECT EXISTS(SELECT 1 FROM urls WHERE short_code=$1)", shortCode).Scan(&exists)
+			if err != nil {
+				log.Println("Error checking existing short code:", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memeriksa kode unik"})
+				return
+			}
+
+			if !exists {
+				break // Keluar dari loop jika kode unik
+			}
+		}
+	}
+
+	// Insert ke database
+	_, err := config.DB.Exec(c, "INSERT INTO urls (short_code, original_url) VALUES ($1, $2)", shortCode, request.OriginalURL)
 	if err != nil {
-		log.Println("Error inserting into DB:", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
+		log.Println("Database Insert Error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan URL"})
 		return
 	}
 
-	// Return hasilnya
-	shortURL := "http://localhost:9080/" + shortCode
-	log.Println("Short URL generated:", shortURL)
-
-	c.JSON(http.StatusOK, gin.H{"short_url": shortURL})
+	c.JSON(http.StatusOK, gin.H{"short_url": "http://localhost:9080/" + shortCode})
 }
 
 func RedirectURL(c *gin.Context) {
